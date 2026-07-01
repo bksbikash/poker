@@ -1,115 +1,128 @@
-# Texas Hold'em Poker
+# Texas Hold'em Poker — networked multiplayer
 
-A production-ready, single-table Texas Hold'em game built with **Next.js 15 (App Router)**, **React 19**, **TypeScript (strict, zero `any`)**, **Tailwind CSS v4**, **Zustand**, and **Framer Motion**. It is **local hot-seat multiplayer** for **2–10 guests** (no AI), implementing the official rules end to end — blinds, betting, side pots, full hand evaluation, showdown — with a custom coin economy and standings.
+A production-ready Texas Hold'em game built with **Next.js 15 (App Router)**, **React 19**, **TypeScript (strict, zero `any`)**, **Tailwind CSS v4**, **Zustand**, and **Framer Motion**.
+
+Create a table, **share the link**, and up to **10 guests play from their own devices**. The server is authoritative — all poker rules run server-side and each device only ever sees its own hole cards. The full official rules are implemented: blinds, betting, side pots, hand evaluation, showdown — with a custom coin economy, a dealer-loan system (no elimination), live standings, a 30-second turn clock, and automatic dealing.
 
 ## Highlights
 
-- **Local multiplayer, no AI** — 2–10 human guests share one device and pass it on each turn.
-- **Complete, correct rules engine** — Fisher–Yates shuffle, no duplicate cards, dealer/blind rotation, pre-flop → flop → turn → river → showdown.
-- **Exact chip accounting** — main pot, multiple side pots, uncalled-bet returns, split pots with correct odd-chip distribution.
+- **Cross-device multiplayer via a share link** — one host creates a room, everyone else opens `/room/<code>` on their phone/laptop and takes a seat.
+- **Server-authoritative & secure** — rules run only on the server; state is streamed to each client **redacted** so no one sees another player's hole cards, and the deck is never sent to the browser.
+- **Live sync with Server-Sent Events** — every device gets an instant, always-current view; actions go over REST. No extra services or WebSocket server needed.
+- **Complete, correct rules engine** — Fisher–Yates shuffle, no duplicate cards, dealer/blind rotation, pre-flop → flop → turn → river → showdown, exact main/side-pot accounting, split pots with the correct odd-chip rule.
 - **Full hand evaluator** — all ten categories, ace-high and ace-low (wheel) straights, kickers and precise tie-breakers.
-- **Legal-action enforcement** — illegal moves (checking into a bet, sub-minimum raises, acting out of turn, acting after folding, invalid amounts) are impossible to make.
-- **30-second turn clock** — every player has 30s to act; on timeout they auto-check, or auto-fold when facing a bet. No manual "deal" button — the next hand deals automatically after a short showdown pause.
-- **Realistic cards** — proper pip layouts for number cards, court/ace faces, 3D flip + deal animations.
-- **Polished UI** — responsive felt table, seated players, dealer button, colored coin stacks, turn highlight + countdown, winner overlay.
-- **Pure engine, separated from UI** — the entire rules layer is side-effect-free `(state, action) => state`, which makes it directly reusable for authoritative server-side (networked) multiplayer.
+- **Illegal moves are impossible** — checking into a bet, sub-minimum raises, out-of-turn play, acting after folding and invalid amounts are all rejected by the engine.
+- **30-second turn clock** — auto-check, or auto-fold when facing a bet, on timeout. Hands deal automatically after a short showdown pause (no manual "deal" button).
+- **Realistic cards + polished UI** — proper pip layouts, court/ace faces, 3D flip & deal animations, colored coin stacks, a persistent chip-standings bar, crown/loser badges, and a winner overlay.
 
 ## House rules
 
-- **Coins** — every player starts with **5×🟢100 + 5×🔵500 + 5×🔴1000 = 8,000** chips.
-- **No elimination — dealer loans** — when a player runs out of chips, the dealer auto-loans them **5,000** more so they can keep playing. The loan counts against them.
-- **Standings** — **net worth = chips − loans**. The leader wears a 👑 **king crown**; the player most in the red wears an inverted "loser" crown. Badges update live as the game goes on.
-
-> An `aiEngine` module ships with the project and is used **only** as a fuzz-test harness to validate the rules engine — it is not part of gameplay.
+- **Coins** — every player starts with **5×🟢100 + 5×🔵500 + 5×🔴1000 = 8,000** chips. Chips are always visible for every player during play.
+- **No elimination — dealer loans** — when a player runs out, the dealer auto-loans **5,000** so they keep playing; the loan counts against them.
+- **Standings** — **net worth = chips − loans**. The leader wears a 👑 **king crown**; the player most in the red wears an inverted "loser" crown. Both update live.
 
 ## Getting started
 
 ```bash
 npm install
-npm run dev        # http://localhost:3000
+npm run dev          # http://localhost:3000
 ```
 
-Other scripts:
+1. Open the app and **Create Table** (choose your name and the blinds).
+2. On the lobby screen, **copy the share link** and send it to your friends.
+3. Each guest opens the link on their device and takes a seat.
+4. The host clicks **Start Game** — play begins and syncs to everyone.
+
+Production:
 
 ```bash
-npm run build      # production build
-npm start          # serve the production build
-npm test           # run the engine + store test suite (Vitest)
-npm run typecheck  # tsc --noEmit
+npm run build
+npm start             # serves the production build (webpack build → `next start`)
 ```
+
+Other scripts: `npm test` (Vitest), `npm run typecheck` (`tsc --noEmit`).
+
+> The dev script uses Turbopack; the production `build` uses the webpack builder because `next start` requires its route manifest. Both run the same app.
 
 ## Architecture
 
-The codebase is split into a **pure logic layer** (`lib/poker`), a **state/orchestration layer** (`store`), and a **presentation layer** (`components`). UI never contains poker rules; logic never touches the DOM.
+Three layers: a **pure rules engine** (`lib/poker`), a **server-authoritative room manager** (`lib/server` + `app/api`), and a **client** (`store` + `components`) that renders redacted state and submits actions.
 
 ```
-lib/poker/
-  types.ts            All domain types (strict; no `any`)
-  deck.ts             52-card deck, card labels, duplicate guard
-  shuffle.ts          Fisher–Yates shuffle + seedable RNG (deterministic tests)
-  handEvaluator.ts    Best-5-of-7 evaluation, comparison, tie-breakers
-  sidePotManager.ts   Side-pot construction + uncalled-bet returns
-  winnerEvaluator.ts  Showdown resolution, split pots, odd-chip rule
-  betting.ts          Legal actions, validation, chip commitment, raise rules
-  turnManager.ts      Turn order, betting-round completion
-  dealer.ts           Button rotation, blind assignment, dealing (incl. heads-up)
-  gameEngine.ts       Pure state machine: createGame / startHand / act; loans + standings
-  aiEngine.ts         (Test-only) decision making used to fuzz the engine
-  index.ts            Public barrel
+lib/
+  config.ts               Shared constants (coins, loan, 30s clock, blind presets)
+  roomTypes.ts            RoomSnapshot / lobby types shared by server & client
+  poker/                  PURE engine — no I/O, no DOM
+    types.ts              Domain types (strict; no `any`)
+    deck.ts, shuffle.ts   52-card deck, Fisher–Yates + seedable RNG, dup guard
+    handEvaluator.ts      Best-5-of-7 evaluation, comparison, tie-breakers
+    sidePotManager.ts     Side pots + uncalled-bet returns
+    winnerEvaluator.ts    Showdown resolution, split pots, odd-chip rule
+    betting.ts            Legal actions, validation, chip accounting
+    turnManager.ts        Turn order + betting-round completion
+    dealer.ts             Button/blinds/dealing (incl. heads-up)
+    gameEngine.ts         Pure state machine + loans + standings
+    aiEngine.ts           (Test-only) decision making used to fuzz the engine
+  server/
+    roomManager.ts        In-memory rooms, authoritative timers, per-viewer redaction
 
-store/
-  gameStore.ts        Zustand store; 30s turn clock + automatic dealing (local multiplayer)
-
-components/poker/
-  PokerTable, PlayerSeat, PlayingCard, CommunityCards, Pot,
-  BettingControls, DealerButton, ChipStack, WinnerModal, Lobby
+app/api/rooms/…           create · join · start · action · stream (SSE)
+store/roomStore.ts        Client: EventSource subscription + REST actions
+components/poker/         CreateRoom, RoomView, PokerTable, PlayerSeat, PlayingCard,
+                          CommunityCards, Pot, BettingControls, DealerButton,
+                          ChipStack, WinnerModal
+app/page.tsx              Create-a-table home
+app/room/[id]/page.tsx    Join → lobby (share link) → table
 ```
 
-### Data flow
+### Flow
 
 ```
-UI event ─▶ store.playerAction(action)   // applies to the current player
-                 │
-                 ▼
-        gameEngine.act(state, id, action)   ← pure, validated, immutable
-                 │  returns new GameState
-                 ▼
-        store.set({ game })  ─▶ scheduleNext()
-                 │
-                 ├─ player's turn? → start 30s clock; on timeout auto check/fold
-                 └─ showdown?      → setTimeout(startHand)  (auto-deal next hand)
+Host: POST /api/rooms ─▶ { roomId, token }         (host seated as p0)
+Guests: open /room/<id> ─▶ POST /api/rooms/:id/join ─▶ { token }
+All: GET /api/rooms/:id/stream?token=…  (SSE)  ◀── redacted RoomSnapshot on every change
+Host: POST /api/rooms/:id/start
+Turn: POST /api/rooms/:id/action { token, action }
+        │
+        ▼
+   roomManager: engine.act(state, seatId, action)   ← validated; wrong seat/turn rejected
+        │  new GameState
+        ▼
+   broadcast → each subscriber gets a snapshot redacted for THEIR seat
+        (own hole cards visible; opponents hidden; deck removed)
 ```
 
-Because `act` is a pure, validating reducer, every input (manual or timeout) shares the exact same code path, and the store can never push the game into an illegal state.
+The server owns the 30-second turn timer and the inter-hand deal timer, so timing is consistent for everyone and a disconnected client can't stall the table.
 
 ## Correctness & tests
 
-The rules engine is covered by a Vitest suite (`tests/`) including:
+Vitest suite (`npm test`, 50 tests):
 
-- deck integrity and shuffle properties (no dupes, multiset preserved, deterministic with a seed);
-- every hand category, the wheel straight, kicker battles and exact ties;
-- side-pot construction, uncalled-bet refunds, side-pot awarding, split pots and the odd-chip rule;
-- legal-action / illegal-action enforcement and minimum-raise rules;
-- a **40-hand AI fuzz test** asserting no illegal action is ever produced and **chips are conserved to the last unit**;
-- store-level integration tests (fake timers) that drive a full hand with AI auto-acting and confirm the next hand auto-deals.
+- deck integrity + shuffle properties (no dupes, multiset preserved, deterministic with a seed);
+- every hand category, the wheel straight, kicker battles, exact ties;
+- side-pot construction, uncalled-bet refunds, side-pot awarding, split pots + odd chip;
+- legal/illegal action enforcement + minimum raise;
+- loan-on-bust and standings (leader/loser);
+- a **40-hand fuzz test** asserting no illegal action is ever produced and chips are conserved to the last unit;
+- **room-manager integration tests**: rostering, host-only start, redaction (opponents' cards and the deck are never exposed), out-of-turn rejection, the 30s auto-fold, and automatic next-hand dealing.
+
+## Notes & scaling
+
+- **Rooms are in-memory** on a single server process (kept on `globalThis` to survive dev HMR). Perfect for local play or a single self-hosted instance. For horizontally-scaled / serverless deployment, back the room manager with Redis (or similar) and use a pub/sub fan-out instead of the in-process subscriber map — the engine and redaction logic stay unchanged.
+- **Transport** is SSE (server→client) + REST (client→server), which needs no custom server. Swapping in WebSockets/Socket.IO later is a transport-only change; `gameEngine.act` remains the single authority.
+
+## Deployment
+
+This is a **stateful, long-running Next.js server**: rooms live in memory and every client holds an open SSE connection (see *Notes & scaling*). Host it accordingly.
+
+**Recommended — one persistent Node instance** (Render, Railway, Fly.io, or any VPS):
 
 ```bash
-npm test
+npm install
+npm run build
+npm start            # serves the production build on $PORT — keep one always-on instance
 ```
 
-## Ready for multiplayer
+Configure the host with build command `npm run build` and start command `npm start`. A single instance handles a single table fine; because room state is in-process, do **not** run multiple replicas without the shared-store refactor below.
 
-The engine is intentionally transport-agnostic and authoritative-server friendly:
-
-- **Pure reducers** — `act(state, playerId, action)` returns a brand-new `GameState`. Run it on a Node/WebSocket server and broadcast the resulting state (or a per-seat redacted view that hides other players' hole cards).
-- **Server-side validation** — `getLegalActions` and the `IllegalActionError` thrown by `applyBettingAction` are the single source of truth, so a malicious client cannot force an illegal move.
-- **Deterministic shuffles** — `shuffle`/`shuffleDeck` accept an injectable RNG, enabling provably-fair seeds or a server CSPRNG.
-- **Serializable state** — `GameState` is plain data (no class instances), so it travels cleanly over Socket.IO/WebSocket and is trivial to persist.
-
-To go from local hot-seat to **networked** multiplayer, replace the timer/dispatch glue in `store/gameStore.ts` with a socket transport: send `PlayerAction`s to the server, run `act` there, and stream per-seat `GameState` snapshots back to each client.
-
-## Tech notes
-
-- **Strict typing** — `tsconfig` runs in `strict` mode and the project contains no `any`.
-- **Tailwind v4** via `@tailwindcss/postcss`.
-- **Framer Motion** powers card dealing/flipping, chip stacks, turn pulses and the winner modal.
+**Vercel / serverless — needs one change first.** On Vercel each request can land on a different, short-lived function instance, so the in-memory room map isn't shared between players and long-lived SSE streams are time-capped. The repo builds and deploys, but rooms won't sync reliably. To run it on Vercel, first back `lib/server/roomManager.ts` with a shared store (e.g. Redis / Upstash) plus a pub/sub fan-out for the SSE broadcast — the pure engine and per-seat redaction stay unchanged. Then import the GitHub repo at [vercel.com/new](https://vercel.com/new) and it auto-deploys on every push to `main`.
