@@ -1,0 +1,19 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# A single, always-on Node web service. This app keeps room state IN MEMORY
+# in one process, so it must run as exactly ONE instance — do NOT enable
+# autoscaling or add replicas without the shared-store refactor noted in the
+# README ("Deployment"). One instance is plenty for a single table.
+services:
+  - type: web
+    name: poker
+    runtime: node
+    plan: free            # free web services sleep after ~15m idle; a cold start
+                          # (and any in-flight room) is lost on wake — fine for casual play
+    buildCommand: npm ci && npm run build
+    startCommand: npm start   # `next start` binds to Render's $PORT automatically
+    healthCheckPath: /
+    autoDeploy: true          # redeploy on every push to the connected branch
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
