@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { GameConfig, GameState, PlayerAction } from '@/lib/poker';
 import {
   act,
+  addPlayer,
+  canRepayLoan,
   createGame,
   getLegalActions,
+  repayLoan,
   startHand,
   standings,
   IllegalActionError,
@@ -159,6 +162,37 @@ describe('loan economy & standings', () => {
     const ranks = standings(game);
     expect(ranks.leaderId).toBe(game.players[0].id);
     expect(ranks.loserId).toBe(game.players[2].id);
+  });
+
+  it('adds a player mid-game who sits out until the next deal', () => {
+    let game = startHand(createGame(CONFIG, makeSeeds(2)), createSeededRandom(1));
+    game = addPlayer(game, { id: 'p2', name: 'Newcomer' });
+
+    const joined = game.players.find((p) => p.id === 'p2')!;
+    expect(game.players).toHaveLength(3);
+    expect(joined.chips).toBe(CONFIG.startingChips);
+    expect(joined.folded).toBe(true); // sitting out the current hand
+    expect(joined.holeCards).toHaveLength(0);
+
+    const next = startHand(game, createSeededRandom(2));
+    const dealtIn = next.players.find((p) => p.id === 'p2')!;
+    expect(dealtIn.folded).toBe(false);
+    expect(dealtIn.active).toBe(true);
+    expect(dealtIn.holeCards).toHaveLength(2);
+  });
+
+  it('repays a loan only when holding at least double it', () => {
+    const game = createGame(CONFIG, makeSeeds(2));
+    game.players[0].loan = 5000;
+    game.players[0].chips = 9000; // < 2× loan
+    expect(canRepayLoan(game.players[0])).toBe(false);
+    expect(() => repayLoan(game, game.players[0].id)).toThrow(/double/i);
+
+    game.players[0].chips = 12000; // ≥ 2× loan
+    expect(canRepayLoan(game.players[0])).toBe(true);
+    const after = repayLoan(game, game.players[0].id);
+    expect(after.players[0].loan).toBe(0);
+    expect(after.players[0].chips).toBe(7000); // 12000 − 5000
   });
 });
 

@@ -19,7 +19,10 @@ Create a table, **share the link**, and up to **10 guests play from their own de
 
 - **Coins** — every player starts with **5×🟢100 + 5×🔵500 + 5×🔴1000 = 8,000** chips. Chips are always visible for every player during play.
 - **No elimination — dealer loans** — when a player runs out, the dealer auto-loans **5,000** so they keep playing; the loan counts against them.
+- **Repay a loan** — a player may repay their dealer loan in full once they hold **at least double** the loan in chips. The loan leaves the stack and the debt (and loser-badge risk) is cleared.
 - **Standings** — **net worth = chips − loans**. The leader wears a 👑 **king crown**; the player most in the red wears an inverted "loser" crown. Both update live.
+- **Full showdown reveal** — at showdown the whole table stays revealed for **15 seconds** with every shown hand face-up and a non-blocking winner banner (with a countdown) — not a pop-up that hides the table — before the next hand deals.
+- **Join mid-match** — a guest who opens the link after the game has started takes a seat with a fresh 8,000-chip stack, sits out the hand in progress, and is dealt in automatically on the next deal.
 
 ## Getting started
 

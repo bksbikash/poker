@@ -2,8 +2,10 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { GameConfig, GameState, PlayerAction, PlayerSeed } from '@/lib/poker';
 import {
   act as engineAct,
+  addPlayer,
   createGame,
   getLegalActions,
+  repayLoan as engineRepayLoan,
   startHand,
   IllegalActionError,
 } from '@/lib/poker';
@@ -43,6 +45,7 @@ interface Room {
   game: GameState | null;
   started: boolean;
   turnEndsAt: number | null;
+  nextHandAt: number | null;
   turnTimer: ReturnType<typeof setTimeout> | null;
   dealTimer: ReturnType<typeof setTimeout> | null;
   subscribers: Map<string, (snapshot: RoomSnapshot) => void>;
@@ -103,6 +106,7 @@ function snapshotFor(room: Room, token: string | null): RoomSnapshot {
     players: lobbyRoster(room),
     game: room.game ? redactGame(room.game, viewerId) : null,
     turnEndsAt: room.turnEndsAt,
+    nextHandAt: room.nextHandAt,
   };
 }
 
@@ -131,6 +135,7 @@ function schedule(room: Room): void {
 
   if (game.phase === 'showdown' || game.phase === 'handComplete') {
     room.turnEndsAt = null;
+    room.nextHandAt = Date.now() + SHOWDOWN_PAUSE_MS;
     room.dealTimer = setTimeout(() => {
       if (!room.game) return;
       room.game = startHand(room.game);
@@ -140,6 +145,7 @@ function schedule(room: Room): void {
     return;
   }
 
+  room.nextHandAt = null;
   const current = game.players[game.currentPlayerIndex];
   if (!current) {
     room.turnEndsAt = null;
@@ -202,6 +208,7 @@ export function createRoom(input: {
     game: null,
     started: false,
     turnEndsAt: null,
+    nextHandAt: null,
     turnTimer: null,
     dealTimer: null,
     subscribers: new Map(),
@@ -212,7 +219,6 @@ export function createRoom(input: {
 
 export function joinRoom(roomId: string, name: string): JoinResult {
   const room = requireRoom(roomId);
-  if (room.started) throw new Error('Game already in progress');
   if (room.seats.length >= MAX_PLAYERS) throw new Error('Table is full');
 
   const seatIndex = room.seats.length;
@@ -223,6 +229,14 @@ export function joinRoom(roomId: string, name: string): JoinResult {
     seatIndex,
   };
   room.seats.push(seat);
+
+  // Joining mid-match: seat the player with a fresh stack. They sit out the
+  // current hand and are dealt in automatically on the next deal.
+  if (room.started && room.game) {
+    room.game = addPlayer(room.game, { id: seat.id, name: seat.name });
+    room.config = { ...room.config, maxPlayers: room.seats.length };
+  }
+
   broadcast(room);
   return { roomId, token: seat.token, playerId: seat.id };
 }
@@ -261,6 +275,16 @@ export function submitAction(roomId: string, token: string, action: PlayerAction
 
   room.game = engineAct(game, seat.id, action); // throws IllegalActionError on bad input
   schedule(room);
+  broadcast(room);
+}
+
+/** Repay a player's dealer loan (requires holding at least double the loan). */
+export function repayLoan(roomId: string, token: string): void {
+  const room = requireRoom(roomId);
+  const seat = room.seats.find((s) => s.token === token);
+  if (!seat) throw new Error('You are not seated at this table');
+  if (!room.game) throw new Error('Game has not started');
+  room.game = engineRepayLoan(room.game, seat.id); // throws if ineligible
   broadcast(room);
 }
 

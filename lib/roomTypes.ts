@@ -27,4 +27,6 @@ export interface RoomSnapshot {
   game: GameState | null;
   /** Epoch ms when the current turn auto-resolves, or null. */
   turnEndsAt: number | null;
+  /** Epoch ms when the next hand will be dealt during a showdown, or null. */
+  nextHandAt: number | null;
 }

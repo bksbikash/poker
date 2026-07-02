@@ -21,6 +21,7 @@ export interface RoomStore {
   disconnect: () => void;
   start: () => Promise<void>;
   act: (action: PlayerAction) => Promise<void>;
+  repay: () => Promise<void>;
   clearError: () => void;
 }
 
@@ -92,6 +93,22 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     if (!res.ok) {
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       set({ error: data.error ?? 'Action rejected' });
+    } else {
+      set({ error: null });
+    }
+  },
+
+  repay: async () => {
+    const { roomId, token } = get();
+    if (!roomId || !token) return;
+    const res = await fetch(`/api/rooms/${roomId}/repay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      set({ error: data.error ?? 'Could not repay loan' });
     } else {
       set({ error: null });
     }

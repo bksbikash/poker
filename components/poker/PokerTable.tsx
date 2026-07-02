@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
+  canRepayLoan,
   cardId,
   displayPot,
   getLegalActions,
@@ -24,8 +25,11 @@ interface PokerTableProps {
   /** The local device's player id. */
   youId: string | null;
   turnEndsAt: number | null;
+  /** Epoch ms when the next hand deals (during a showdown). */
+  nextHandAt: number | null;
   error?: string | null;
   onAction: (action: PlayerAction) => void;
+  onRepay: () => void;
   onLeave: () => void;
 }
 
@@ -59,7 +63,16 @@ function deriveShowdown(game: GameState): ShowdownInfo {
 }
 
 /** The full poker table, driven entirely by a (redacted) server snapshot. */
-export function PokerTable({ game, youId, turnEndsAt, error, onAction, onLeave }: PokerTableProps) {
+export function PokerTable({
+  game,
+  youId,
+  turnEndsAt,
+  nextHandAt,
+  error,
+  onAction,
+  onRepay,
+  onLeave,
+}: PokerTableProps) {
   const showdown = useMemo(() => deriveShowdown(game), [game]);
   const ranks = useMemo(() => standings(game), [game]);
 
@@ -79,8 +92,10 @@ export function PokerTable({ game, youId, turnEndsAt, error, onAction, onLeave }
   const n = game.players.length;
   const pot = displayPot(game);
   // Orient the table so this device's own seat sits at the bottom-centre.
-  const youSeat = game.players.find((p) => p.id === youId)?.seatIndex ?? 0;
+  const you = game.players.find((p) => p.id === youId) ?? null;
+  const youSeat = you?.seatIndex ?? 0;
   const displayIndexOf = (player: Player): number => (player.seatIndex - youSeat + n) % n;
+  const repayable = you ? canRepayLoan(you) : false;
 
   const waitingText =
     game.phase === 'showdown'
@@ -183,8 +198,31 @@ export function PokerTable({ game, youId, turnEndsAt, error, onAction, onLeave }
           );
         })}
 
-        <WinnerModal visible={game.phase === 'showdown'} awards={game.awards} players={game.players} />
+        <WinnerModal
+          visible={game.phase === 'showdown'}
+          awards={game.awards}
+          players={game.players}
+          nextHandAt={nextHandAt}
+        />
       </div>
+
+      {/* Repay loan */}
+      {you && you.loan > 0 && (
+        <div className="flex w-full max-w-3xl items-center justify-between rounded-lg bg-slate-900/70 px-4 py-2 text-xs ring-1 ring-white/10">
+          <span className="text-rose-300">
+            Your dealer loan: <span className="font-mono">−{you.loan.toLocaleString()}</span>
+          </span>
+          <button
+            type="button"
+            onClick={onRepay}
+            disabled={!repayable}
+            title={repayable ? 'Repay your loan' : `Need ${(you.loan * 2).toLocaleString()} chips to repay`}
+            className="rounded-md bg-emerald-600 px-3 py-1 font-semibold text-white transition hover:bg-emerald-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Repay loan
+          </button>
+        </div>
+      )}
 
       {/* Action log + controls */}
       <div className="grid w-full max-w-3xl grid-cols-1 gap-3 sm:grid-cols-[1fr_1.4fr]">

@@ -197,6 +197,63 @@ export function getLegalActions(state: GameState, playerId: string): LegalAction
   return computeLegalActions(state, playerId);
 }
 
+/**
+ * Seat a new player at the table mid-game. They join with the standard starting
+ * stack but sit out the hand in progress (folded, inactive) and are dealt in
+ * automatically on the next {@link startHand}. Appended at the end so existing
+ * seat indices — and therefore the current hand — are untouched.
+ */
+export function addPlayer(
+  state: GameState,
+  player: { id: string; name: string },
+): GameState {
+  const next = cloneState(state);
+  const seatIndex = next.players.length;
+  next.players.push({
+    id: player.id,
+    name: player.name,
+    seatIndex,
+    chips: next.config.startingChips,
+    loan: 0,
+    holeCards: [],
+    currentBet: 0,
+    totalBet: 0,
+    folded: true, // sitting out the hand in progress
+    allIn: false,
+    dealer: false,
+    smallBlind: false,
+    bigBlind: false,
+    active: false,
+    eliminated: false,
+    hasActedThisRound: false,
+    isAI: false,
+    difficulty: null,
+  });
+  return next;
+}
+
+/** Whether a player may repay their loan (must hold at least double it). */
+export function canRepayLoan(player: Player): boolean {
+  return player.loan > 0 && player.chips >= player.loan * 2;
+}
+
+/**
+ * Repay a player's dealer loan in full. Requires holding at least double the
+ * loan; the loan amount leaves the stack and the debt is cleared. Net worth is
+ * unchanged — it simply removes the debt (and the risk of the loser badge).
+ */
+export function repayLoan(state: GameState, playerId: string): GameState {
+  const next = cloneState(state);
+  const player = next.players.find((p) => p.id === playerId);
+  if (!player) throw new Error(`Unknown player: ${playerId}`);
+  if (!canRepayLoan(player)) {
+    throw new Error('You need at least double your loan in chips to repay it');
+  }
+  player.chips -= player.loan;
+  player.loan = 0;
+  return next;
+}
+
 /** The player whose turn it is, or null when no one is to act. */
 export function currentPlayer(state: GameState): Player | null {
   if (state.currentPlayerIndex < 0) return null;

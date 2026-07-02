@@ -16,6 +16,7 @@ export function RoomView({ roomId }: { roomId: string }) {
   const connect = useRoomStore((s) => s.connect);
   const disconnect = useRoomStore((s) => s.disconnect);
   const act = useRoomStore((s) => s.act);
+  const repay = useRoomStore((s) => s.repay);
   const start = useRoomStore((s) => s.start);
 
   const [token, setToken] = useState<string | null>(null);
@@ -199,8 +200,10 @@ export function RoomView({ roomId }: { roomId: string }) {
       game={snapshot.game}
       youId={snapshot.you}
       turnEndsAt={snapshot.turnEndsAt}
+      nextHandAt={snapshot.nextHandAt}
       error={error}
       onAction={act}
+      onRepay={repay}
       onLeave={leave}
     />
   );

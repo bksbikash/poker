@@ -12,8 +12,12 @@ export const LOAN_AMOUNT = 5000;
 /** Seconds each player has to act before an auto check/fold. */
 export const TURN_SECONDS = 30;
 
-/** Pause after a hand resolves before the next is dealt automatically (ms). */
-export const SHOWDOWN_PAUSE_MS = 4500;
+/**
+ * Pause after a hand resolves before the next is dealt automatically (ms).
+ * The whole table stays revealed for this window so everyone can see the
+ * winning hand and all shown cards.
+ */
+export const SHOWDOWN_PAUSE_MS = 15000;
 
 /** Coin-friendly blind presets (all multiples of 100). */
 export const BLIND_OPTIONS: readonly { sb: number; bb: number }[] = [

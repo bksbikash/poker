@@ -6,6 +6,7 @@ import {
   submitAction,
   subscribe,
 } from '@/lib/server/roomManager';
+import { SHOWDOWN_PAUSE_MS } from '@/lib/config';
 import type { RoomSnapshot } from '@/lib/roomTypes';
 
 /**
@@ -131,8 +132,38 @@ describe('room manager', () => {
     expect(game.players.reduce((s, p) => s + p.chips, 0)).toBe(8000 * 3);
 
     const handBefore = game.handNumber;
-    vi.advanceTimersByTime(5_000);
+    vi.advanceTimersByTime(SHOWDOWN_PAUSE_MS + 500);
     expect(view.get().game!.handNumber).toBe(handBefore + 1);
+    view.unsub();
+  });
+
+  it('lets a guest join mid-match and deals them in on the next hand', () => {
+    const { roomId, tokens, hostToken } = setupRoom();
+    startRoom(roomId, hostToken);
+
+    const late = joinRoom(roomId, 'Zoe');
+    const view = watch(roomId, late.token);
+
+    // Sitting out the hand in progress.
+    const sitting = view.get().game!.players.find((p) => p.id === late.playerId)!;
+    expect(sitting.folded).toBe(true);
+    expect(sitting.chips).toBe(8000);
+    expect(view.get().players).toHaveLength(4);
+
+    // Play the current hand out (the latecomer never acts — they're folded).
+    let guard = 0;
+    while (guard++ < 50) {
+      const game = view.get().game!;
+      if (game.phase === 'showdown' || game.phase === 'handComplete') break;
+      const currentId = game.players[game.currentPlayerIndex].id;
+      submitAction(roomId, tokens[currentId], { type: 'fold' });
+    }
+
+    // Next hand deals the latecomer in.
+    vi.advanceTimersByTime(SHOWDOWN_PAUSE_MS + 500);
+    const dealtIn = view.get().game!.players.find((p) => p.id === late.playerId)!;
+    expect(dealtIn.folded).toBe(false);
+    expect(dealtIn.holeCards).toHaveLength(2); // visible in their own view
     view.unsub();
   });
 });
