@@ -60,6 +60,7 @@ export function makePlayer(overrides: Partial<Player> & { id: string; seatIndex:
     bigBlind: false,
     active: true,
     eliminated: false,
+    sittingOut: false,
     hasActedThisRound: false,
     isAI: false,
     difficulty: null,

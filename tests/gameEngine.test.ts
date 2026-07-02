@@ -5,7 +5,10 @@ import {
   addPlayer,
   canRepayLoan,
   createGame,
+  forceFold,
   getLegalActions,
+  leaveTable,
+  rejoinTable,
   repayLoan,
   startHand,
   standings,
@@ -193,6 +196,39 @@ describe('loan economy & standings', () => {
     const after = repayLoan(game, game.players[0].id);
     expect(after.players[0].loan).toBe(0);
     expect(after.players[0].chips).toBe(7000); // 12000 − 5000
+  });
+});
+
+describe('leaving & disconnects', () => {
+  it('force-folds a leaver and awards the pot when one player remains (heads-up)', () => {
+    const headsUp = { ...CONFIG, maxPlayers: 2 };
+    const game = startHand(createGame(headsUp, makeSeeds(2)), createSeededRandom(7));
+    const victim = game.players[game.currentPlayerIndex].id;
+    const next = forceFold(game, victim);
+    expect(next.players.find((p) => p.id === victim)!.folded).toBe(true);
+    expect(next.phase).toBe('showdown'); // the other player wins uncontested
+  });
+
+  it('sits a leaver out so they are skipped on the next deal', () => {
+    let game = startHand(createGame(CONFIG, makeSeeds(3)), createSeededRandom(8));
+    game = leaveTable(game, 'p1');
+    const left = game.players.find((p) => p.id === 'p1')!;
+    expect(left.folded).toBe(true);
+    expect(left.sittingOut).toBe(true);
+
+    const next = startHand(game, createSeededRandom(9)); // p0 & p2 still seated
+    expect(next.players.find((p) => p.id === 'p1')!.holeCards).toHaveLength(0);
+    expect(next.players.find((p) => p.id === 'p1')!.active).toBe(false);
+    expect(next.players.find((p) => p.id === 'p0')!.holeCards).toHaveLength(2);
+  });
+
+  it('deals a returning player back in after rejoinTable', () => {
+    let game = startHand(createGame(CONFIG, makeSeeds(3)), createSeededRandom(10));
+    game = leaveTable(game, 'p1');
+    game = rejoinTable(game, 'p1');
+    expect(game.players.find((p) => p.id === 'p1')!.sittingOut).toBe(false);
+    const next = startHand(game, createSeededRandom(11));
+    expect(next.players.find((p) => p.id === 'p1')!.holeCards).toHaveLength(2);
   });
 });
 

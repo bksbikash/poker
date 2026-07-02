@@ -12,7 +12,9 @@ Create a table, **share the link**, and up to **10 guests play from their own de
 - **Complete, correct rules engine** — Fisher–Yates shuffle, no duplicate cards, dealer/blind rotation, pre-flop → flop → turn → river → showdown, exact main/side-pot accounting, split pots with the correct odd-chip rule.
 - **Full hand evaluator** — all ten categories, ace-high and ace-low (wheel) straights, kickers and precise tie-breakers.
 - **Illegal moves are impossible** — checking into a bet, sub-minimum raises, out-of-turn play, acting after folding and invalid amounts are all rejected by the engine.
-- **30-second turn clock** — auto-check, or auto-fold when facing a bet, on timeout. Hands deal automatically after a short showdown pause (no manual "deal" button).
+- **30-second turn clock** — a player who doesn't act in time is **auto-folded**. Hands deal automatically after the showdown window (no manual "deal" button).
+- **Watch, then sit in** — open the link to **spectate** (you see the board and chip counts but no one's hole cards), then take a seat whenever you like.
+- **Leave / disconnect handling** — leaving the table (or dropping offline past a short grace period) **auto-folds** the current hand and sits the player out; reconnecting deals them back in on the next hand.
 - **Realistic cards + polished UI** — proper pip layouts, court/ace faces, 3D flip & deal animations, colored coin stacks, a persistent chip-standings bar, crown/loser badges, and a winner overlay.
 
 ## House rules
@@ -22,7 +24,8 @@ Create a table, **share the link**, and up to **10 guests play from their own de
 - **Repay a loan** — a player may repay their dealer loan in full once they hold **at least double** the loan in chips. The loan leaves the stack and the debt (and loser-badge risk) is cleared.
 - **Standings** — **net worth = chips − loans**. The leader wears a 👑 **king crown**; the player most in the red wears an inverted "loser" crown. Both update live.
 - **Full showdown reveal** — at showdown the whole table stays revealed for **15 seconds** with every shown hand face-up and a non-blocking winner banner (with a countdown) — not a pop-up that hides the table — before the next hand deals.
-- **Join mid-match** — a guest who opens the link after the game has started takes a seat with a fresh 8,000-chip stack, sits out the hand in progress, and is dealt in automatically on the next deal.
+- **Join mid-match** — a guest who opens the link after the game has started (whether they were spectating or arriving fresh) takes a seat with a fresh 8,000-chip stack, sits out the hand in progress, and is dealt in automatically on the next deal.
+- **Idle / absent = folded** — not acting within the 30-second clock, leaving the table, or disconnecting all fold you out of the current hand; leaving/disconnecting also sits you out until you return.
 
 ## Getting started
 

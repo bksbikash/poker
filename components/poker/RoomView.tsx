@@ -7,7 +7,9 @@ import { useRoomStore } from '@/store/roomStore';
 import { MIN_PLAYERS, MAX_PLAYERS, TURN_SECONDS } from '@/lib/config';
 import { PokerTable } from './PokerTable';
 
-/** Everything shown at /room/[id]: join → lobby (with share link) → table. */
+type Intent = 'loading' | 'choose' | 'join' | 'watch' | 'play';
+
+/** /room/[id]: choose (watch or sit) → join → lobby (share link) → table. */
 export function RoomView({ roomId }: { roomId: string }) {
   const router = useRouter();
   const snapshot = useRoomStore((s) => s.snapshot);
@@ -18,9 +20,9 @@ export function RoomView({ roomId }: { roomId: string }) {
   const act = useRoomStore((s) => s.act);
   const repay = useRoomStore((s) => s.repay);
   const start = useRoomStore((s) => s.start);
+  const storeLeave = useRoomStore((s) => s.leave);
 
-  const [token, setToken] = useState<string | null>(null);
-  const [checked, setChecked] = useState(false);
+  const [intent, setIntent] = useState<Intent>('loading');
   const [name, setName] = useState('');
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -28,16 +30,24 @@ export function RoomView({ roomId }: { roomId: string }) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem(`poker:${roomId}`);
     setShareUrl(`${window.location.origin}/room/${roomId}`);
-    setToken(stored);
-    setChecked(true);
-    if (stored) connect(roomId, stored);
+    const stored = localStorage.getItem(`poker:${roomId}`);
+    if (stored) {
+      setIntent('play');
+      connect(roomId, stored);
+    } else {
+      setIntent('choose');
+    }
   }, [roomId, connect]);
 
   useEffect(() => () => disconnect(), [disconnect]);
 
-  const join = useCallback(async () => {
+  const watch = useCallback(() => {
+    setIntent('watch');
+    connect(roomId, ''); // tokenless spectator stream
+  }, [roomId, connect]);
+
+  const doJoin = useCallback(async () => {
     setJoining(true);
     setJoinError(null);
     try {
@@ -53,7 +63,7 @@ export function RoomView({ roomId }: { roomId: string }) {
         return;
       }
       localStorage.setItem(`poker:${roomId}`, data.token);
-      setToken(data.token);
+      setIntent('play');
       connect(roomId, data.token);
     } catch {
       setJoinError('Network error — please try again');
@@ -62,10 +72,11 @@ export function RoomView({ roomId }: { roomId: string }) {
   }, [roomId, name, connect]);
 
   const leave = useCallback(() => {
-    disconnect();
+    if (snapshot?.you) storeLeave();
+    else disconnect();
     localStorage.removeItem(`poker:${roomId}`);
     router.push('/');
-  }, [roomId, disconnect, router]);
+  }, [roomId, snapshot?.you, storeLeave, disconnect, router]);
 
   const copy = useCallback(() => {
     navigator.clipboard?.writeText(shareUrl).then(() => {
@@ -74,13 +85,40 @@ export function RoomView({ roomId }: { roomId: string }) {
     });
   }, [shareUrl]);
 
-  if (!checked) return <Centered>Loading…</Centered>;
+  if (intent === 'loading') return <Centered>Loading…</Centered>;
 
-  // No seat yet → join form.
-  if (!token) {
+  if (intent === 'choose') {
     return (
       <Panel>
         <h1 className="mb-1 text-center text-xl font-black text-amber-300">Join Table</h1>
+        <p className="mb-5 text-center text-sm text-slate-400">
+          Room <span className="font-mono text-amber-300">{roomId}</span>
+        </p>
+        <button
+          type="button"
+          onClick={() => setIntent('join')}
+          className="mb-2 w-full rounded-xl bg-amber-500 py-2.5 font-bold text-slate-900 transition hover:bg-amber-400 active:scale-95"
+        >
+          Take a seat
+        </button>
+        <button
+          type="button"
+          onClick={watch}
+          className="w-full rounded-xl bg-slate-700 py-2.5 font-semibold text-slate-100 transition hover:bg-slate-600 active:scale-95"
+        >
+          Watch the game
+        </button>
+        <p className="mt-3 text-center text-[0.7rem] text-slate-500">
+          Watch first, then sit in whenever you like — you&apos;ll be dealt in on the next hand.
+        </p>
+      </Panel>
+    );
+  }
+
+  if (intent === 'join') {
+    return (
+      <Panel>
+        <h1 className="mb-1 text-center text-xl font-black text-amber-300">Take a seat</h1>
         <p className="mb-4 text-center text-sm text-slate-400">
           Room <span className="font-mono text-amber-300">{roomId}</span>
         </p>
@@ -94,16 +132,24 @@ export function RoomView({ roomId }: { roomId: string }) {
         {joinError && <p className="mb-3 text-center text-xs text-rose-400">{joinError}</p>}
         <button
           type="button"
-          onClick={join}
+          onClick={doJoin}
           disabled={joining}
           className="w-full rounded-xl bg-amber-500 py-2.5 font-bold text-slate-900 transition hover:bg-amber-400 active:scale-95 disabled:opacity-50"
         >
-          {joining ? 'Joining…' : 'Take a seat'}
+          {joining ? 'Joining…' : 'Sit down'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setIntent('choose')}
+          className="mt-2 w-full rounded-lg bg-slate-800 py-2 text-sm text-slate-300 hover:bg-slate-700"
+        >
+          Back
         </button>
       </Panel>
     );
   }
 
+  // intent === 'watch' | 'play' → connected.
   if (!snapshot) {
     return (
       <Centered>
@@ -111,6 +157,8 @@ export function RoomView({ roomId }: { roomId: string }) {
       </Centered>
     );
   }
+
+  const spectating = snapshot.you === null;
 
   // Pre-game lobby.
   if (!snapshot.started) {
@@ -165,7 +213,15 @@ export function RoomView({ roomId }: { roomId: string }) {
 
         {error && <p className="mb-2 text-center text-xs text-rose-400">{error}</p>}
 
-        {snapshot.isHost ? (
+        {spectating ? (
+          <button
+            type="button"
+            onClick={() => setIntent('join')}
+            className="w-full rounded-xl bg-amber-500 py-2.5 font-bold text-slate-900 transition hover:bg-amber-400 active:scale-95"
+          >
+            Take a seat
+          </button>
+        ) : snapshot.isHost ? (
           <button
             type="button"
             onClick={start}
@@ -187,7 +243,7 @@ export function RoomView({ roomId }: { roomId: string }) {
         </button>
 
         <p className="mt-3 text-center text-[0.7rem] text-slate-500">
-          {TURN_SECONDS}s per turn · auto check/fold on timeout · hands deal automatically
+          {TURN_SECONDS}s per turn · idle players auto-fold · hands deal automatically
         </p>
       </Panel>
     );
@@ -196,16 +252,30 @@ export function RoomView({ roomId }: { roomId: string }) {
   if (!snapshot.game) return <Centered>Dealing…</Centered>;
 
   return (
-    <PokerTable
-      game={snapshot.game}
-      youId={snapshot.you}
-      turnEndsAt={snapshot.turnEndsAt}
-      nextHandAt={snapshot.nextHandAt}
-      error={error}
-      onAction={act}
-      onRepay={repay}
-      onLeave={leave}
-    />
+    <div className="flex w-full flex-col items-center gap-2">
+      {spectating && (
+        <div className="flex w-full max-w-3xl items-center justify-between rounded-lg bg-indigo-950/60 px-4 py-2 text-xs text-indigo-200 ring-1 ring-indigo-500/30">
+          <span>👀 You&apos;re watching this table.</span>
+          <button
+            type="button"
+            onClick={() => setIntent('join')}
+            className="rounded-md bg-amber-500 px-3 py-1 font-bold text-slate-900 hover:bg-amber-400"
+          >
+            Sit in
+          </button>
+        </div>
+      )}
+      <PokerTable
+        game={snapshot.game}
+        youId={snapshot.you}
+        turnEndsAt={snapshot.turnEndsAt}
+        nextHandAt={snapshot.nextHandAt}
+        error={error}
+        onAction={act}
+        onRepay={repay}
+        onLeave={leave}
+      />
+    </div>
   );
 }
 
@@ -222,5 +292,9 @@ function Panel({ children }: { children: React.ReactNode }) {
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-xl bg-slate-900/70 px-6 py-4 text-slate-300 ring-1 ring-white/10">{children}</div>;
+  return (
+    <div className="rounded-xl bg-slate-900/70 px-6 py-4 text-slate-300 ring-1 ring-white/10">
+      {children}
+    </div>
+  );
 }

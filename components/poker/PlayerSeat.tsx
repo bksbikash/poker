@@ -40,7 +40,7 @@ export function PlayerSeat({
   const hiddenCount = Math.max(0, totalCards - visibleCards.length);
 
   return (
-    <motion.div layout className="flex flex-col items-center gap-1">
+    <motion.div layout className={`flex flex-col items-center gap-1 ${player.sittingOut ? 'opacity-45' : ''}`}>
       {/* Crown / loser indicator */}
       <div className="flex h-5 items-end">
         {isLeader && (
@@ -135,7 +135,12 @@ export function PlayerSeat({
               All-In
             </motion.span>
           )}
-          {player.folded && (
+          {player.sittingOut && (
+            <span className="absolute -bottom-2 rounded-full bg-slate-600 px-2 py-0.5 text-[0.55rem] font-bold uppercase tracking-wide text-slate-200">
+              Away
+            </span>
+          )}
+          {player.folded && !player.sittingOut && (
             <span className="absolute -bottom-2 rounded-full bg-slate-700 px-2 py-0.5 text-[0.55rem] font-bold uppercase tracking-wide text-slate-300">
               Folded
             </span>

@@ -4,7 +4,8 @@ import {
   act as engineAct,
   addPlayer,
   createGame,
-  getLegalActions,
+  leaveTable,
+  rejoinTable,
   repayLoan as engineRepayLoan,
   startHand,
   IllegalActionError,
@@ -29,12 +30,19 @@ import type { LobbyPlayer, RoomSnapshot } from '@/lib/roomTypes';
  */
 
 const TURN_MS = TURN_SECONDS * 1000;
+/** Grace period after a socket drops before the player is folded & sat out. */
+const DISCONNECT_GRACE_MS = 8000;
 
 interface Seat {
   token: string;
   id: string;
   name: string;
   seatIndex: number;
+}
+
+interface Subscriber {
+  token: string | null;
+  send: (snapshot: RoomSnapshot) => void;
 }
 
 interface Room {
@@ -48,7 +56,10 @@ interface Room {
   nextHandAt: number | null;
   turnTimer: ReturnType<typeof setTimeout> | null;
   dealTimer: ReturnType<typeof setTimeout> | null;
-  subscribers: Map<string, (snapshot: RoomSnapshot) => void>;
+  /** Keyed by a unique connection id so reconnects don't clobber each other. */
+  subscribers: Map<string, Subscriber>;
+  /** Pending disconnect grace timers, keyed by seat id. */
+  awayTimers: Map<string, ReturnType<typeof setTimeout>>;
 }
 
 const globalStore = globalThis as unknown as { __pokerRooms?: Map<string, Room> };
@@ -59,7 +70,6 @@ const rooms: Map<string, Room> = (globalStore.__pokerRooms ??= new Map<string, R
 /* -------------------------------------------------------------------------- */
 
 function shortCode(): string {
-  // 6-character, unambiguous, upper-case room code for shareable links.
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = randomBytes(6);
   let code = '';
@@ -73,8 +83,18 @@ function requireRoom(roomId: string): Room {
   return room;
 }
 
+function seatByToken(room: Room, token: string | null): Seat | undefined {
+  return token ? room.seats.find((s) => s.token === token) : undefined;
+}
+
 function lobbyRoster(room: Room): LobbyPlayer[] {
   return room.seats.map((s) => ({ id: s.id, name: s.name, seatIndex: s.seatIndex }));
+}
+
+/** Number of players eligible to be dealt in (seated, not sitting out). */
+function activeSeatCount(room: Room): number {
+  if (!room.game) return room.seats.length;
+  return room.game.players.filter((p) => !p.eliminated && !p.sittingOut).length;
 }
 
 /** Redact a game for a specific viewer: hide opponents' cards and the deck. */
@@ -83,17 +103,13 @@ function redactGame(game: GameState, viewerId: string | null): GameState {
   const showdownReveal = game.phase === 'showdown' && contenders.length >= 2;
   const players = game.players.map((p) => {
     const reveal = p.id === viewerId || (showdownReveal && !p.folded);
-    return {
-      ...p,
-      holeCount: p.holeCards.length,
-      holeCards: reveal ? p.holeCards : [],
-    };
+    return { ...p, holeCount: p.holeCards.length, holeCards: reveal ? p.holeCards : [] };
   });
   return { ...game, deck: [], players };
 }
 
 function snapshotFor(room: Room, token: string | null): RoomSnapshot {
-  const seat = token ? room.seats.find((s) => s.token === token) : undefined;
+  const seat = seatByToken(room, token);
   const viewerId = seat?.id ?? null;
   return {
     roomId: room.id,
@@ -111,7 +127,7 @@ function snapshotFor(room: Room, token: string | null): RoomSnapshot {
 }
 
 function broadcast(room: Room): void {
-  for (const [token, send] of room.subscribers) {
+  for (const { token, send } of room.subscribers.values()) {
     send(snapshotFor(room, token));
   }
 }
@@ -133,7 +149,7 @@ function schedule(room: Room): void {
   const game = room.game;
   if (!game) return;
 
-  if (game.phase === 'showdown' || game.phase === 'handComplete') {
+  if (game.phase === 'showdown') {
     room.turnEndsAt = null;
     room.nextHandAt = Date.now() + SHOWDOWN_PAUSE_MS;
     room.dealTimer = setTimeout(() => {
@@ -142,6 +158,13 @@ function schedule(room: Room): void {
       schedule(room);
       broadcast(room);
     }, SHOWDOWN_PAUSE_MS);
+    return;
+  }
+
+  if (game.phase === 'handComplete') {
+    // Not enough active players to deal — wait for someone to join / return.
+    room.turnEndsAt = null;
+    room.nextHandAt = null;
     return;
   }
 
@@ -155,19 +178,71 @@ function schedule(room: Room): void {
   room.turnTimer = setTimeout(() => autoAct(room), TURN_MS);
 }
 
+/** Turn clock expired: the idle player auto-folds. */
 function autoAct(room: Room): void {
   const game = room.game;
   if (!game) return;
   const current = game.players[game.currentPlayerIndex];
   if (!current) return;
-  const legal = getLegalActions(game, current.id);
   try {
-    room.game = engineAct(game, current.id, legal.canCheck ? { type: 'check' } : { type: 'fold' });
+    room.game = engineAct(game, current.id, { type: 'fold' });
   } catch {
-    // Should never happen — auto action is always legal — but never crash the loop.
+    // fold is always legal on one's turn; never crash the loop
   }
   schedule(room);
   broadcast(room);
+}
+
+/** Deal a fresh hand if the table is idle waiting for enough players. */
+function dealIfWaiting(room: Room): void {
+  if (!room.started || !room.game) return;
+  if (room.game.phase !== 'handComplete') return;
+  if (activeSeatCount(room) < MIN_PLAYERS) return;
+  room.game = startHand(room.game);
+  schedule(room);
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Presence / disconnect handling                                            */
+/* -------------------------------------------------------------------------- */
+
+function hasTokenSubscriber(room: Room, token: string): boolean {
+  for (const { token: t } of room.subscribers.values()) if (t === token) return true;
+  return false;
+}
+
+/** After the grace period with no connection, fold & sit the player out. */
+function scheduleAway(room: Room, token: string): void {
+  const seat = seatByToken(room, token);
+  if (!seat || room.awayTimers.has(seat.id)) return;
+  const timer = setTimeout(() => {
+    room.awayTimers.delete(seat.id);
+    if (room.game) {
+      room.game = leaveTable(room.game, seat.id);
+      schedule(room);
+    }
+    broadcast(room);
+  }, DISCONNECT_GRACE_MS);
+  room.awayTimers.set(seat.id, timer);
+}
+
+/** A connection returned: cancel any pending away timer and reinstate the seat. */
+function cancelAway(room: Room, token: string): void {
+  const seat = seatByToken(room, token);
+  if (!seat) return;
+  const timer = room.awayTimers.get(seat.id);
+  if (timer) {
+    clearTimeout(timer);
+    room.awayTimers.delete(seat.id);
+  }
+  if (room.game) {
+    const player = room.game.players.find((p) => p.id === seat.id);
+    if (player?.sittingOut) {
+      room.game = rejoinTable(room.game, seat.id);
+      dealIfWaiting(room);
+      broadcast(room);
+    }
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -194,12 +269,7 @@ export function createRoom(input: {
     maxPlayers: MAX_PLAYERS,
   };
   const token = randomUUID();
-  const hostSeat: Seat = {
-    token,
-    id: 'p0',
-    name: sanitizeName(input.hostName, 0),
-    seatIndex: 0,
-  };
+  const hostSeat: Seat = { token, id: 'p0', name: sanitizeName(input.hostName, 0), seatIndex: 0 };
   const room: Room = {
     id,
     hostId: hostSeat.id,
@@ -212,6 +282,7 @@ export function createRoom(input: {
     turnTimer: null,
     dealTimer: null,
     subscribers: new Map(),
+    awayTimers: new Map(),
   };
   rooms.set(id, room);
   return { roomId: id, token, playerId: hostSeat.id };
@@ -231,10 +302,11 @@ export function joinRoom(roomId: string, name: string): JoinResult {
   room.seats.push(seat);
 
   // Joining mid-match: seat the player with a fresh stack. They sit out the
-  // current hand and are dealt in automatically on the next deal.
+  // hand in progress and are dealt in automatically on the next deal.
   if (room.started && room.game) {
     room.game = addPlayer(room.game, { id: seat.id, name: seat.name });
     room.config = { ...room.config, maxPlayers: room.seats.length };
+    dealIfWaiting(room); // in case the table was idle waiting for players
   }
 
   broadcast(room);
@@ -243,7 +315,7 @@ export function joinRoom(roomId: string, name: string): JoinResult {
 
 export function startRoom(roomId: string, token: string): void {
   const room = requireRoom(roomId);
-  const seat = room.seats.find((s) => s.token === token);
+  const seat = seatByToken(room, token);
   if (!seat || seat.id !== room.hostId) throw new Error('Only the host can start the game');
   if (room.started) throw new Error('Game already started');
   if (room.seats.length < MIN_PLAYERS) throw new Error('Need at least two players');
@@ -263,7 +335,7 @@ export function startRoom(roomId: string, token: string): void {
 
 export function submitAction(roomId: string, token: string, action: PlayerAction): void {
   const room = requireRoom(roomId);
-  const seat = room.seats.find((s) => s.token === token);
+  const seat = seatByToken(room, token);
   if (!seat) throw new Error('You are not seated at this table');
   const game = room.game;
   if (!game) throw new Error('Game has not started');
@@ -281,10 +353,27 @@ export function submitAction(roomId: string, token: string, action: PlayerAction
 /** Repay a player's dealer loan (requires holding at least double the loan). */
 export function repayLoan(roomId: string, token: string): void {
   const room = requireRoom(roomId);
-  const seat = room.seats.find((s) => s.token === token);
+  const seat = seatByToken(room, token);
   if (!seat) throw new Error('You are not seated at this table');
   if (!room.game) throw new Error('Game has not started');
   room.game = engineRepayLoan(room.game, seat.id); // throws if ineligible
+  broadcast(room);
+}
+
+/** A player explicitly leaves: fold them now and sit them out. */
+export function leaveRoom(roomId: string, token: string): void {
+  const room = requireRoom(roomId);
+  const seat = seatByToken(room, token);
+  if (!seat) return;
+  const timer = room.awayTimers.get(seat.id);
+  if (timer) {
+    clearTimeout(timer);
+    room.awayTimers.delete(seat.id);
+  }
+  if (room.game) {
+    room.game = leaveTable(room.game, seat.id);
+    schedule(room);
+  }
   broadcast(room);
 }
 
@@ -295,11 +384,13 @@ export function subscribe(
   send: (snapshot: RoomSnapshot) => void,
 ): () => void {
   const room = requireRoom(roomId);
-  const key = token ?? `spectator-${randomUUID()}`;
-  room.subscribers.set(key, send);
+  const connId = randomUUID();
+  room.subscribers.set(connId, { token, send });
+  if (token) cancelAway(room, token);
   send(snapshotFor(room, token));
   return () => {
-    room.subscribers.delete(key);
+    room.subscribers.delete(connId);
+    if (token && !hasTokenSubscriber(room, token)) scheduleAway(room, token);
   };
 }
 

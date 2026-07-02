@@ -23,9 +23,9 @@ export function isInHand(player: Player): boolean {
   return player.active && !player.eliminated && !player.folded;
 }
 
-/** Player is seated and part of the game (not busted out). */
+/** Player is seated and dealt into hands (not busted out, not sitting out). */
 export function isSeated(player: Player): boolean {
-  return !player.eliminated;
+  return !player.eliminated && !player.sittingOut;
 }
 
 /**

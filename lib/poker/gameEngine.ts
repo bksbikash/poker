@@ -77,6 +77,7 @@ export function createGame(config: GameConfig, seeds: readonly PlayerSeed[]): Ga
     bigBlind: false,
     active: false,
     eliminated: false,
+    sittingOut: false,
     hasActedThisRound: false,
     isAI: seed.isAI,
     difficulty: seed.difficulty,
@@ -117,17 +118,24 @@ export function startHand(state: GameState, rng: RandomSource = Math.random): Ga
 
   // No elimination: a player who has run out of chips is auto-loaned more by
   // the dealer so they can keep playing. The loan is tracked against them and
-  // reduces their net worth (used for standings).
+  // reduces their net worth (used for standings). Players sitting out are not
+  // loaned or dealt in.
   for (const player of next.players) {
-    if (player.chips <= 0) {
+    if (isSeated(player) && player.chips <= 0) {
       player.chips += next.config.loanAmount;
       player.loan += next.config.loanAmount;
     }
   }
 
   if (next.players.filter(isSeated).length < 2) {
+    // Not enough active players to deal — wait for someone to join / return.
     next.phase = 'handComplete';
     next.currentPlayerIndex = -1;
+    for (const player of next.players) {
+      player.holeCards = [];
+      player.currentBet = 0;
+      player.totalBet = 0;
+    }
     return next;
   }
 
@@ -141,13 +149,14 @@ export function startHand(state: GameState, rng: RandomSource = Math.random): Ga
     player.holeCards = [];
     player.currentBet = 0;
     player.totalBet = 0;
-    player.folded = false;
     player.allIn = false;
     player.dealer = false;
     player.smallBlind = false;
     player.bigBlind = false;
     player.hasActedThisRound = false;
-    player.active = !player.eliminated;
+    const seated = isSeated(player);
+    player.active = seated;
+    player.folded = !seated; // sitting-out / eliminated players are out of the hand
   }
 
   // Select / rotate the dealer button onto a seated player.
@@ -225,10 +234,49 @@ export function addPlayer(
     bigBlind: false,
     active: false,
     eliminated: false,
+    sittingOut: false,
     hasActedThisRound: false,
     isAI: false,
     difficulty: null,
   });
+  return next;
+}
+
+/**
+ * Fold a specific player out of the current hand regardless of whose turn it
+ * is — used when a player leaves or disconnects. Re-settles the hand (which may
+ * award an uncontested pot or advance the action).
+ */
+export function forceFold(state: GameState, playerId: string): GameState {
+  const next = cloneState(state);
+  const player = next.players.find((p) => p.id === playerId);
+  if (!player) return next;
+  if (!isBettablePhase(next.phase) || player.folded || !player.active) {
+    return next; // not in a live hand
+  }
+  player.folded = true;
+  player.active = false;
+  player.hasActedThisRound = true;
+  return settle(next);
+}
+
+/** A player leaves / disconnects: fold them now and sit them out of future hands. */
+export function leaveTable(state: GameState, playerId: string): GameState {
+  const next = forceFold(state, playerId);
+  const player = next.players.find((p) => p.id === playerId);
+  if (player) {
+    player.sittingOut = true;
+    player.active = false;
+    player.folded = true;
+  }
+  return next;
+}
+
+/** A player returns: clear the sitting-out flag so they are dealt in next hand. */
+export function rejoinTable(state: GameState, playerId: string): GameState {
+  const next = cloneState(state);
+  const player = next.players.find((p) => p.id === playerId);
+  if (player) player.sittingOut = false;
   return next;
 }
 

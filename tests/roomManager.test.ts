@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createRoom,
   joinRoom,
+  leaveRoom,
   startRoom,
   submitAction,
   subscribe,
@@ -164,6 +165,30 @@ describe('room manager', () => {
     const dealtIn = view.get().game!.players.find((p) => p.id === late.playerId)!;
     expect(dealtIn.folded).toBe(false);
     expect(dealtIn.holeCards).toHaveLength(2); // visible in their own view
+    view.unsub();
+  });
+
+  it('folds and sits out a player who leaves the table', () => {
+    const { roomId, tokens, hostToken } = setupRoom();
+    startRoom(roomId, hostToken);
+    const view = watch(roomId, hostToken);
+
+    leaveRoom(roomId, tokens.p1);
+    const p1 = view.get().game!.players.find((p) => p.id === 'p1')!;
+    expect(p1.folded).toBe(true);
+    expect(p1.sittingOut).toBe(true);
+
+    // On the next hand the leaver is not dealt in.
+    let guard = 0;
+    while (guard++ < 50) {
+      const g = view.get().game!;
+      if (g.phase === 'showdown' || g.phase === 'handComplete') break;
+      const currentId = g.players[g.currentPlayerIndex].id;
+      submitAction(roomId, tokens[currentId], { type: 'fold' });
+    }
+    vi.advanceTimersByTime(SHOWDOWN_PAUSE_MS + 500);
+    const after = view.get().game!.players.find((p) => p.id === 'p1')!;
+    expect(after.holeCount ?? 0).toBe(0);
     view.unsub();
   });
 });

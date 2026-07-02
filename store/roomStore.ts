@@ -22,6 +22,8 @@ export interface RoomStore {
   start: () => Promise<void>;
   act: (action: PlayerAction) => Promise<void>;
   repay: () => Promise<void>;
+  /** Leave the table (server auto-folds the current hand), then disconnect. */
+  leave: () => Promise<void>;
   clearError: () => void;
 }
 
@@ -112,6 +114,20 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     } else {
       set({ error: null });
     }
+  },
+
+  leave: async () => {
+    const { roomId, token } = get();
+    if (roomId && token) {
+      // Fire-and-forget; the disconnect grace would also cover this.
+      await fetch(`/api/rooms/${roomId}/leave`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      }).catch(() => undefined);
+    }
+    closeSource();
+    set({ status: 'idle', snapshot: null, roomId: null, token: null });
   },
 
   clearError: () => set({ error: null }),

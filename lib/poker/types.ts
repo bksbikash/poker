@@ -102,8 +102,13 @@ export interface Player {
   bigBlind: boolean;
   /** Dealt into and still part of the current hand (not folded/eliminated). */
   active: boolean;
-  /** Out of the game entirely — no chips remaining. */
+  /** Out of the game entirely — no chips remaining. (Unused: loans replace elimination.) */
   eliminated: boolean;
+  /**
+   * Temporarily out — left the table or disconnected. Kept seated (chips
+   * preserved) but skipped for dealing/positions until they return.
+   */
+  sittingOut: boolean;
   /** Whether this player has acted at least once in the current betting round. */
   hasActedThisRound: boolean;
   readonly isAI: boolean;
